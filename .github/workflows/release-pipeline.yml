@@ -1,0 +1,306 @@
+name: Release Pipeline
+
+# NOTE: This is a MOCK pipeline. Every step is a simulated echo/sleep — it does
+# not build, test, scan, or deploy anything. It exists to demonstrate the
+# build -> gated staging -> smoke -> gated prod (us/eu) -> smoke flow in the UI.
+# The 'staging' and 'prod' environments have a required reviewer, so the two
+# deploy stages pause for a manual approval in the Actions UI.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version to ship"
+        required: false
+        default: "v1.42.0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ github.event.inputs.version || 'v1.42.0' }}
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # Stage 1 — Build & package
+  # ----------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, agent, ingestion-worker, web]
+    steps:
+      - name: Restore build cache
+        run: |
+          echo "Cache hit for ${{ matrix.service }} (key go-${{ matrix.service }}-abc123)"
+      - name: Compile ${{ matrix.service }}
+        run: |
+          echo "Building ${{ matrix.service }} @ ${VERSION}"
+          sleep 6
+          echo "::notice::${{ matrix.service }} compiled in 5.8s"
+      - name: Package container image
+        run: |
+          echo "Packaging lemmata/${{ matrix.service }}:${VERSION}"
+          sleep 4
+          echo "Pushed lemmata/${{ matrix.service }}:${VERSION} (sha256:9f2c…e10a)"
+
+  # ----------------------------------------------------------------------------
+  # Stage 1 — Quality gates (run in parallel with build)
+  # ----------------------------------------------------------------------------
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Run unit suite
+        run: |
+          echo "Running 1,842 unit tests across 214 packages…"
+          sleep 9
+          echo "::notice::1842 passed, 0 failed, 0 skipped (8.7s)"
+
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Spin up ephemeral postgres + kafka
+        run: echo "docker compose up -d postgres kafka  →  healthy"
+      - name: Run integration suite
+        run: |
+          echo "Running 137 integration tests…"
+          sleep 12
+          echo "::notice::137 passed, 0 failed (11.4s)"
+
+  lint:
+    name: Lint (golangci-lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: golangci-lint run ./...
+        run: |
+          echo "Linting 312 Go files…"
+          sleep 5
+          echo "::notice::0 issues found"
+
+  gofmt:
+    name: Format check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: gofmt -l
+        run: |
+          echo "Checking formatting…"
+          sleep 3
+          echo "All files formatted correctly"
+
+  codegen-check:
+    name: Codegen (proto / gorm / sqlc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Verify generated code is up to date
+        run: |
+          echo "buf generate + gorm + sqlc → diffing against committed code…"
+          sleep 5
+          echo "No drift detected"
+
+  vulnerability-scan:
+    name: Security · dependency scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Trivy filesystem scan
+        run: |
+          echo "Scanning dependencies for known CVEs…"
+          sleep 6
+          echo "::notice::0 critical, 0 high, 2 low (informational)"
+
+  credentials-scan:
+    name: Security · secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: gitleaks detect
+        run: |
+          echo "Scanning git history for leaked credentials…"
+          sleep 4
+          echo "No secrets detected"
+
+  sast:
+    name: Security · SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Semgrep ci
+        run: |
+          echo "Running 1,204 SAST rules…"
+          sleep 7
+          echo "::notice::0 findings"
+
+  code-review:
+    name: Automated code review
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Claude review
+        run: |
+          echo "Analyzing diff for correctness & style regressions…"
+          sleep 6
+          echo "::notice::No blocking issues. 1 nit (non-blocking)."
+
+  openapi-check:
+    name: API · breaking change check
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: OpenAPI diff
+        run: |
+          echo "Comparing OpenAPI spec against main…"
+          sleep 4
+          echo "No breaking changes"
+
+  # ----------------------------------------------------------------------------
+  # Stage 2 — Deploy to staging  (MANUAL GATE — 'staging' environment reviewer)
+  # ----------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy → staging
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - unit-tests
+      - integration-tests
+      - lint
+      - gofmt
+      - codegen-check
+      - vulnerability-scan
+      - credentials-scan
+      - sast
+      - code-review
+      - openapi-check
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: https://staging.lemmata.lema.ai
+    steps:
+      - name: Roll out to staging
+        run: |
+          echo "Applying manifests to staging cluster (eks-staging)…"
+          sleep 8
+          echo "Waiting for rollout to stabilize…"
+          sleep 4
+          echo "::notice::staging is now running ${VERSION}"
+
+  smoke-staging:
+    name: Smoke · staging · ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, agent, ingestion-worker, web]
+    steps:
+      - name: Health & critical-path checks
+        run: |
+          echo "Smoke testing ${{ matrix.service }} on staging…"
+          echo "GET https://staging.lemmata.lema.ai/${{ matrix.service }}/healthz → 200"
+          sleep 5
+          echo "::notice::staging ${{ matrix.service }} smoke passed"
+
+  # ----------------------------------------------------------------------------
+  # Stage 3 — Promote to production  (MANUAL GATE — 'prod' environment reviewer)
+  # ----------------------------------------------------------------------------
+  approve-production:
+    name: Promote to production
+    runs-on: ubuntu-latest
+    needs: smoke-staging
+    timeout-minutes: 60
+    environment:
+      name: prod
+    steps:
+      - name: Promotion approved
+        run: echo "Production promotion approved for ${VERSION}. Rolling out to all regions."
+
+  deploy-prod-us:
+    name: Deploy → prod-us
+    runs-on: ubuntu-latest
+    needs: approve-production
+    timeout-minutes: 20
+    environment:
+      name: prod-us
+      url: https://app.lema.ai
+    steps:
+      - name: Canary 10%
+        run: |
+          echo "Shifting 10% traffic to ${VERSION} in us-east-1…"
+          sleep 6
+          echo "Canary healthy (error rate 0.01%)"
+      - name: Full rollout
+        run: |
+          echo "Promoting to 100% in us-east-1…"
+          sleep 6
+          echo "::notice::prod-us now running ${VERSION}"
+
+  deploy-prod-eu:
+    name: Deploy → prod-eu
+    runs-on: ubuntu-latest
+    needs: approve-production
+    timeout-minutes: 20
+    environment:
+      name: prod-eu
+      url: https://eu.app.lema.ai
+    steps:
+      - name: Canary 10%
+        run: |
+          echo "Shifting 10% traffic to ${VERSION} in eu-west-1…"
+          sleep 6
+          echo "Canary healthy (error rate 0.00%)"
+      - name: Full rollout
+        run: |
+          echo "Promoting to 100% in eu-west-1…"
+          sleep 6
+          echo "::notice::prod-eu now running ${VERSION}"
+
+  smoke-prod-us:
+    name: Smoke · prod-us · ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: deploy-prod-us
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, agent, ingestion-worker, web]
+    steps:
+      - name: Post-deploy verification
+        run: |
+          echo "Smoke testing ${{ matrix.service }} on prod-us (us-east-1)…"
+          echo "GET https://app.lema.ai/${{ matrix.service }}/healthz → 200"
+          sleep 5
+          echo "::notice::prod-us ${{ matrix.service }} smoke passed"
+
+  smoke-prod-eu:
+    name: Smoke · prod-eu · ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: deploy-prod-eu
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api-gateway, agent, ingestion-worker, web]
+    steps:
+      - name: Post-deploy verification
+        run: |
+          echo "Smoke testing ${{ matrix.service }} on prod-eu (eu-west-1)…"
+          echo "GET https://eu.app.lema.ai/${{ matrix.service }}/healthz → 200"
+          sleep 5
+          echo "::notice::prod-eu ${{ matrix.service }} smoke passed"
