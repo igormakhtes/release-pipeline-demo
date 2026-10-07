@@ -33,7 +33,7 @@ jobs:
   # ----------------------------------------------------------------------------
   build:
     name: Build (${{ matrix.service }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     strategy:
       fail-fast: false
@@ -46,12 +46,10 @@ jobs:
       - name: Compile ${{ matrix.service }}
         run: |
           echo "Building ${{ matrix.service }} @ ${VERSION}"
-          sleep 6
           echo "::notice::${{ matrix.service }} compiled in 5.8s"
       - name: Package container image
         run: |
           echo "Packaging lemmata/${{ matrix.service }}:${VERSION}"
-          sleep 4
           echo "Pushed lemmata/${{ matrix.service }}:${VERSION} (sha256:9f2c…e10a)"
 
   # ----------------------------------------------------------------------------
@@ -59,18 +57,17 @@ jobs:
   # ----------------------------------------------------------------------------
   unit-tests:
     name: Unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
       - name: Run unit suite
         run: |
           echo "Running 1,842 unit tests across 214 packages…"
-          sleep 9
           echo "::notice::1842 passed, 0 failed, 0 skipped (8.7s)"
 
   integration-tests:
     name: Integration tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 15
     steps:
       - name: Spin up ephemeral postgres + kafka
@@ -78,95 +75,86 @@ jobs:
       - name: Run integration suite
         run: |
           echo "Running 137 integration tests…"
-          sleep 12
           echo "::notice::137 passed, 0 failed (11.4s)"
 
   lint:
     name: Lint (golangci-lint)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 8
     steps:
       - name: golangci-lint run ./...
         run: |
           echo "Linting 312 Go files…"
-          sleep 5
           echo "::notice::0 issues found"
 
   gofmt:
     name: Format check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 5
     steps:
       - name: gofmt -l
         run: |
           echo "Checking formatting…"
-          sleep 3
           echo "All files formatted correctly"
 
   codegen-check:
     name: Codegen (proto / gorm / sqlc)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 8
     steps:
       - name: Verify generated code is up to date
         run: |
           echo "buf generate + gorm + sqlc → diffing against committed code…"
-          sleep 5
           echo "No drift detected"
 
   vulnerability-scan:
     name: Security · dependency scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 8
     steps:
       - name: Trivy filesystem scan
         run: |
           echo "Scanning dependencies for known CVEs…"
-          sleep 6
           echo "::notice::0 critical, 0 high, 2 low (informational)"
 
   credentials-scan:
     name: Security · secret scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 6
     steps:
       - name: gitleaks detect
         run: |
           echo "Scanning git history for leaked credentials…"
-          sleep 4
           echo "No secrets detected"
 
   sast:
     name: Security · SAST
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 8
     steps:
       - name: Semgrep ci
         run: |
           echo "Running 1,204 SAST rules…"
-          sleep 7
           echo "::notice::0 findings"
 
   code-review:
     name: Automated code review
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 8
     steps:
       - name: Claude review
         run: |
           echo "Analyzing diff for correctness & style regressions…"
-          sleep 6
           echo "::notice::No blocking issues. 1 nit (non-blocking)."
 
   openapi-check:
     name: API · breaking change check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 6
     steps:
       - name: OpenAPI diff
         run: |
           echo "Comparing OpenAPI spec against main…"
-          sleep 4
           echo "No breaking changes"
 
   # ----------------------------------------------------------------------------
